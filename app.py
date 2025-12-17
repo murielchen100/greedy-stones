@@ -10,8 +10,6 @@ st.set_page_config(page_title="退石最優化計算工具", layout="wide")
 st.image("https://cdn-icons-png.flaticon.com/512/616/616490.png", width=80)
 
 class StoneOptimizer:
-    """Class to handle stone optimization calculations"""
-    
     def __init__(self):
         self.col_pcs = "pcs"
         self.col_weight = "cts"
@@ -40,7 +38,7 @@ class StoneOptimizer:
         except (ValueError, TypeError):
             return ""
 
-    # 精確窮舉模式（僅用於 pcs <= 50）
+    # 精確窮舉模式（僅在石頭少且 pcs 小時使用）
     def find_exact_combination(self, available_stones: list[float], target_count: int, 
                                target_weight: float, tolerance: float) -> tuple[list[int], float] | None:
         for combo_indices in itertools.combinations(range(len(available_stones)), target_count):
@@ -50,34 +48,25 @@ class StoneOptimizer:
                 return (list(combo_indices), total_weight)
         return None
 
-    # Greedy 近似模式（快速，適用大 pcs）
+    # Greedy 快速模式
     def find_greedy_combination(self, available_stones: list[float], target_count: int, 
                                 target_weight: float, tolerance: float) -> tuple[list[int], float] | None:
         if target_count == 0:
             return [], 0.0
         
-        # 按重量從大到小排序
+        # 從大到小排序，優先選大石頭
         indexed_stones = sorted(enumerate(available_stones), key=lambda x: x[1], reverse=True)
         selected_indices = []
         current_total = 0.0
         
-        for idx, weight in indexed_stones:
+        for orig_idx, weight in indexed_stones:
             if len(selected_indices) >= target_count:
                 break
-            # 暫時加入這顆石頭
-            temp_total = current_total + weight
-            temp_count = len(selected_indices) + 1
-            
-            if temp_count == target_count:
-                if abs(temp_total - target_weight) <= tolerance:
-                    selected_indices.append(idx)
-                    return selected_indices, temp_total
-            
-            # 只要還沒滿，就先加進去（greedy 策略）
-            selected_indices.append(idx)
-            current_total = temp_total
+            # 嘗試加入這顆石頭
+            selected_indices.append(orig_idx)
+            current_total += weight
         
-        # 如果剛好湊滿但誤差仍大於 tolerance，回傳 None
+        # 檢查是否在容許誤差內
         if len(selected_indices) == target_count and abs(current_total - target_weight) <= tolerance:
             return selected_indices, current_total
         
@@ -89,7 +78,6 @@ class StoneOptimizer:
         results = []
         used_indices = set()
         
-        # 進度條準備
         progress_bar = st.progress(0)
         progress_text = st.empty()
         total_packages = len(package_rules)
@@ -99,7 +87,6 @@ class StoneOptimizer:
             target = float(rule[self.col_weight])
             pack_id = rule.get(self.col_ref, "")
             
-            # 更新進度
             progress_text.text(f"正在處理分包 {idx+1}/{total_packages}: {pack_id or f'第{idx+1}包'} (pcs={count})")
             progress_bar.progress((idx + 1) / total_packages)
             
@@ -107,7 +94,7 @@ class StoneOptimizer:
             available_weights = [stones[i] for i in available_indices]
             
             match = None
-            if use_greedy or count > 50:
+            if use_greedy:
                 match = self.find_greedy_combination(available_weights, count, target, tolerance)
             else:
                 match = self.find_exact_combination(available_weights, count, target, tolerance)
@@ -125,7 +112,6 @@ class StoneOptimizer:
                 }
                 if pack_id:
                     result_row[self.col_ref] = pack_id
-                
                 results.append(result_row)
                 used_indices.update(global_indices)
             else:
@@ -139,7 +125,6 @@ class StoneOptimizer:
                     result_row[self.col_ref] = pack_id
                 results.append(result_row)
         
-        # 完成後清除進度條
         progress_bar.empty()
         progress_text.empty()
         
@@ -168,7 +153,9 @@ def get_language_labels(lang: str) -> dict[str, str]:
             "invalid_input": "請輸入有效數字（非負數）",
             "no_data": "請至少輸入一個有效用石重量和分包規則",
             "clear_all": "清除全部",
-            "greedy_warning": "⚠️ 偵測到有分包顆數超過 50 顆，已自動切換為「Greedy 快速模式」以確保能順利計算（結果為近似最佳解）"
+            "greedy_warning_stones": "⚠️ 可用石頭數量超過 30 顆，已自動切換為「Greedy 快速模式」以確保計算順暢（結果為近似最佳解）",
+            "greedy_warning_pcs": "⚠️ 有分包顆數超過 50 顆，已自動切換為「Greedy 快速模式」（結果為近似最佳解）",
+            "greedy_warning_both": "⚠️ 石頭數量超過 30 顆且有大包（pcs>50），已自動切換為「Greedy 快速模式」"
         }
     else:
         return {
@@ -192,10 +179,12 @@ def get_language_labels(lang: str) -> dict[str, str]:
             "invalid_input": "Please enter valid numbers (non-negative)",
             "no_data": "Please provide at least one valid stone weight and package rule",
             "clear_all": "Clear all",
-            "greedy_warning": "⚠️ Detected package with pcs > 50, automatically switched to Greedy fast mode (approximate optimal solution)"
+            "greedy_warning_stones": "⚠️ Number of available stones exceeds 30, automatically switched to Greedy fast mode (approximate solution)",
+            "greedy_warning_pcs": "⚠️ Package with pcs > 50 detected, switched to Greedy mode",
+            "greedy_warning_both": "⚠️ Both many stones (>30) and large package (>50 pcs), using Greedy mode"
         }
 
-# === 其餘輸入函數維持不變（stones 100個, packages 30個）===
+# 輸入介面函數（維持 100 石頭 + 30 包）
 def create_stone_input_grid(labels: dict[str, str]) -> list[float]:
     st.subheader(labels["stones_label"])
     st.markdown(f'<span style="font-size:14px; color:gray;">單位：{labels["cts"]}</span>', unsafe_allow_html=True)
@@ -239,21 +228,18 @@ def create_package_rules_input(labels: dict[str, str]) -> list[dict]:
     for i in range(30):
         cols_rule = st.columns([0.7, 1.5, 1.5, 2])
         with cols_rule[0]: st.markdown(f"**{i+1}**")
-        
         with cols_rule[1]:
             pcs_raw = st.text_input("", key=f"pcs_{i}", label_visibility="collapsed", max_chars=3, placeholder="1")
             pcs_val = re.sub(r"\D", "", pcs_raw)[:3] if pcs_raw else ""
             pcs = int(pcs_val) if pcs_val.isdigit() and int(pcs_val) > 0 else 0
             if pcs_raw and pcs == 0:
                 st.warning(labels["invalid_input"], icon="⚠️")
-        
         with cols_rule[2]:
             weight_raw = st.text_input("", key=f"weight_{i}", label_visibility="collapsed", max_chars=10, placeholder="0.000")
             weight_val = StoneOptimizer.valid_3_decimal(weight_raw)
             total_weight = StoneOptimizer.safe_float(weight_val)
             if weight_raw and not weight_val:
                 st.warning(labels["invalid_input"], icon="⚠️")
-        
         with cols_rule[3]:
             pack_id = st.text_input("", key=f"packid_{i}", label_visibility="collapsed", max_chars=20, placeholder="Optional")
         
@@ -290,21 +276,29 @@ def main():
             st.warning(labels["invalid_input"], icon="⚠️")
         tolerance = StoneOptimizer.safe_float(tolerance_val) or 0.003
         
-        if not any(w > 0 for w in stone_weights) or not package_rules:
+        valid_stones = [w for w in stone_weights if w > 0]
+        
+        if not valid_stones or not package_rules:
             st.warning(labels["no_data"], icon="⚠️")
         else:
-            # 檢查是否需要 Greedy
-            max_pcs = max(rule["pcs"] for rule in package_rules)
-            use_greedy = max_pcs > 50
-            if use_greedy:
-                st.warning(labels["greedy_warning"], icon="⚠️")
+            # 判斷是否啟用 Greedy
+            stone_count = len(valid_stones)
+            max_pcs = max(rule["pcs"] for rule in package_rules) if package_rules else 0
+            
+            greedy_by_stones = stone_count > 30
+            greedy_by_pcs = max_pcs > 50
+            
+            if greedy_by_stones and greedy_by_pcs:
+                st.warning(labels["greedy_warning_both"], icon="⚠️")
+            elif greedy_by_stones:
+                st.warning(labels["greedy_warning_stones"], icon="⚠️")
+            elif greedy_by_pcs:
+                st.warning(labels["greedy_warning_pcs"], icon="⚠️")
+            
+            use_greedy = greedy_by_stones or greedy_by_pcs
             
             results = optimizer.calculate_optimal_assignment(
-                [w for w in stone_weights if w > 0],
-                package_rules,
-                tolerance,
-                labels,
-                use_greedy=use_greedy
+                valid_stones, package_rules, tolerance, labels, use_greedy=use_greedy
             )
     
     elif mode == labels["upload_label"]:
@@ -331,7 +325,7 @@ def main():
                     st.error(f"{labels['error_label']}: Missing 'use cts' column")
                     st.stop()
                 
-                # 正確提取用石：只取 ref, cts, pcs 皆空的行
+                # 正確提取用石（只取空白行）
                 has_ref = "ref" in df.columns
                 stones = []
                 for _, row in df.iterrows():
@@ -364,11 +358,20 @@ def main():
                 if not stones or not package_rules:
                     st.warning(labels["no_data"], icon="⚠️")
                 else:
-                    # 檢查是否啟用 Greedy
-                    max_pcs = max(rule["pcs"] for rule in package_rules)
-                    use_greedy = max_pcs > 50
-                    if use_greedy:
-                        st.warning(labels["greedy_warning"], icon="⚠️")
+                    stone_count = len(stones)
+                    max_pcs = max(rule["pcs"] for rule in package_rules) if package_rules else 0
+                    
+                    greedy_by_stones = stone_count > 30
+                    greedy_by_pcs = max_pcs > 50
+                    
+                    if greedy_by_stones and greedy_by_pcs:
+                        st.warning(labels["greedy_warning_both"], icon="⚠️")
+                    elif greedy_by_stones:
+                        st.warning(labels["greedy_warning_stones"], icon="⚠️")
+                    elif greedy_by_pcs:
+                        st.warning(labels["greedy_warning_pcs"], icon="⚠️")
+                    
+                    use_greedy = greedy_by_stones or greedy_by_pcs
                     
                     results = optimizer.calculate_optimal_assignment(stones, package_rules, tolerance, labels, use_greedy=use_greedy)
                     
